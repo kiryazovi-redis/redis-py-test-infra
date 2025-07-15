@@ -81,8 +81,8 @@ class TestEndToEndWorkflow:
         """Test that configuration integrates properly with all components"""
         config = MCPServerConfig()
         
-        with patch('config.config', config):
-            with patch('config.config.project_root', temp_project_dir):
+        with patch('main.config', config):
+            with patch('main.config.project_root', temp_project_dir):
                 # Test that config affects file operations
                 python_files = find_python_files()
                 assert len(python_files) > 0
@@ -189,16 +189,21 @@ class TestErrorHandlingIntegration:
     
     def test_permission_error_handling(self, temp_project_dir):
         """Test handling of permission errors across modules"""
-        with patch('config.config.project_root', temp_project_dir):
+        with patch('main.config.project_root', temp_project_dir):
+            # Create a file first
+            test_file = temp_project_dir / "test.py"
+            test_file.write_text("print('hello')")
+            
             with patch('builtins.open', side_effect=PermissionError("Access denied")):
                 # Test file reading with permission error
                 result = read_file_content("test.py")
                 assert 'error' in result
-                assert 'permission' in result['error'].lower()
+                assert 'permission' in result['error'].lower() or 'access denied' in result['error'].lower()
                 
                 # Test AST parsing with permission error
                 result = parse_module_ast("test.py")
                 assert 'error' in result
+                assert 'permission' in result['error'].lower() or 'access denied' in result['error'].lower()
     
     def test_configuration_error_recovery(self, temp_project_dir):
         """Test recovery from configuration-related errors"""

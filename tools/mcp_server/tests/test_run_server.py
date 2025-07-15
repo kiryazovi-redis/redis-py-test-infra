@@ -44,7 +44,7 @@ class TestCheckDependencies:
     
     def test_check_dependencies_import_error_handling(self):
         """Test handling of import errors"""
-        with patch('run_server.mcp', side_effect=ImportError("Module not found")):
+        with patch('builtins.__import__', side_effect=ImportError("Module not found")):
             with patch('builtins.print') as mock_print:
                 result = check_dependencies()
                 
@@ -122,14 +122,15 @@ class TestRunServer:
     def test_run_server_test_mode(self):
         """Test server run in test mode"""
         with patch('run_server.subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            
-            result = run_server(test_mode=True)
-            
-            assert result == 0
-            # Should run test_server.py instead of main.py
-            call_args = mock_run.call_args[0][0]
-            assert any('test_server.py' in str(arg) for arg in call_args)
+            with patch('run_server.Path.exists', return_value=True):
+                mock_run.return_value = MagicMock(returncode=0)
+                
+                result = run_server(test_mode=True)
+                
+                assert result == 0
+                # Should run test_server.py instead of main.py
+                call_args = mock_run.call_args[0][0]
+                assert any('test_server.py' in str(arg) for arg in call_args)
     
     def test_run_server_test_mode_no_test_file(self):
         """Test server run in test mode when test file doesn't exist"""
@@ -442,14 +443,57 @@ class TestMainIntegration:
         with patch('sys.argv', test_args):
             with patch('run_server.check_dependencies', return_value=True):
                 with patch('run_server.subprocess.run') as mock_run:
-                    mock_run.return_value = MagicMock(returncode=0)
+                    with patch('run_server.Path.exists', return_value=True):
+                        mock_run.return_value = MagicMock(returncode=0)
+                        
+                        result = main()
+                        
+                        assert result == 0
+                        # Should run test_server.py
+                        call_args = mock_run.call_args[0][0]
+                        assert any('test_server.py' in str(arg) for arg in call_args)
+    
+    def test_main_integration_with_test_mode_no_test_file(self):
+        """Test integration with test mode when test file doesn't exist"""
+        test_args = ['run_server.py', '--test']
+        
+        with patch('sys.argv', test_args):
+            with patch('run_server.check_dependencies', return_value=True):
+                with patch('run_server.subprocess.run') as mock_run:
+                    with patch('run_server.Path.exists', return_value=False):
+                        result = main()
+                        
+                        assert result == 1
+    
+    def test_main_integration_server_failure(self):
+        """Test integration when server fails"""
+        test_args = ['run_server.py']
+        
+        with patch('sys.argv', test_args):
+            with patch('run_server.check_dependencies', return_value=True):
+                with patch('run_server.subprocess.run') as mock_run:
+                    mock_run.return_value = MagicMock(returncode=1)
                     
                     result = main()
                     
-                    assert result == 0
-                    # Should run test_server.py
-                    call_args = mock_run.call_args[0][0]
-                    assert any('test_server.py' in str(arg) for arg in call_args)
+                    assert result == 1
+    
+    def test_main_integration_with_test_mode(self):
+        """Test integration with test mode"""
+        test_args = ['run_server.py', '--test']
+        
+        with patch('sys.argv', test_args):
+            with patch('run_server.check_dependencies', return_value=True):
+                with patch('run_server.subprocess.run') as mock_run:
+                    with patch('run_server.Path.exists', return_value=True):
+                        mock_run.return_value = MagicMock(returncode=0)
+                        
+                        result = main()
+                        
+                        assert result == 0
+                        # Should run test_server.py
+                        call_args = mock_run.call_args[0][0]
+                        assert any('test_server.py' in str(arg) for arg in call_args)
 
 
 class TestRunServerEdgeCases:

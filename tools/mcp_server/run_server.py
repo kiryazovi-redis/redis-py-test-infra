@@ -5,7 +5,6 @@ Redis-py MCP Server Launcher
 This script provides a convenient way to launch the MCP server with various options.
 """
 
-import os
 import sys
 import subprocess
 import argparse
@@ -27,8 +26,19 @@ def check_dependencies():
 def run_server(debug=False, max_file_size=None, max_depth=None, test_mode=False):
     """Run the MCP server with specified options."""
     script_dir = Path(__file__).parent
-    main_script = script_dir / "main.py"
     
+    if test_mode:
+        # Run in test mode (just validate and exit)
+        print("Running in test mode...")
+        test_script = script_dir / "test_server.py"
+        if test_script.exists():
+            return subprocess.run([sys.executable, str(test_script)]).returncode
+        else:
+            print("✗ Test script not found")
+            return 1
+    
+    # Check main script exists only when not in test mode
+    main_script = script_dir / "main.py"
     if not main_script.exists():
         print(f"✗ Main script not found: {main_script}")
         return 1
@@ -44,16 +54,6 @@ def run_server(debug=False, max_file_size=None, max_depth=None, test_mode=False)
     
     if max_depth:
         cmd.extend(["--max-depth", str(max_depth)])
-    
-    if test_mode:
-        # Run in test mode (just validate and exit)
-        print("Running in test mode...")
-        test_script = script_dir / "test_server.py"
-        if test_script.exists():
-            return subprocess.run([sys.executable, str(test_script)]).returncode
-        else:
-            print("✗ Test script not found")
-            return 1
     
     print(f"Starting MCP server...")
     print(f"Command: {' '.join(cmd)}")

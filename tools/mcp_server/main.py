@@ -337,11 +337,22 @@ def get_type_hints_from_file(file_path: str) -> Dict[str, Any]:
                 functions.append(func_info)
         
         elif isinstance(node, ast.ClassDef):
-            if node.bases:
-                classes.append({
-                    'name': node.name,
-                    'base_classes': [ast.unparse(base) for base in node.bases]
-                })
+            # Extract class variables with type hints
+            class_variables = []
+            for child in node.body:
+                if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+                    class_variables.append({
+                        'name': child.target.id,
+                        'type': get_type_annotation(child.annotation),
+                        'line_number': child.lineno
+                    })
+            
+            # Include all classes, not just those with base classes
+            classes.append({
+                'name': node.name,
+                'base_classes': [ast.unparse(base) for base in node.bases] if node.bases else [],
+                'class_variables': class_variables
+            })
         
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             variables.append({
@@ -373,12 +384,14 @@ def find_test_files(directory: Optional[Path] = None) -> List[Dict[str, Any]]:
             for path in directory.rglob(pattern):
                 if path.is_file() and not is_ignored_path(path):
                     rel_path = get_relative_path(path)
+                    stat = path.stat()
                     test_files.append({
                         'path': rel_path,
                         'name': path.name,
-                        'size': path.stat().st_size,
+                        'size': stat.st_size,
                         'directory': get_relative_path(path.parent),
-                        'is_test_file': True
+                        'modified': stat.st_mtime,
+                        'is_test': True
                     })
     except Exception as e:
         print(f"Error finding test files: {e}", file=sys.stderr)
@@ -411,11 +424,14 @@ def find_python_files(directory: Optional[Path] = None) -> List[Dict[str, Any]]:
             if path.is_file() and config.is_python_file(path):
                 if not is_ignored_path(path):
                     rel_path = get_relative_path(path)
+                    stat = path.stat()
                     python_files.append({
                         'path': rel_path,
                         'name': path.name,
-                        'size': path.stat().st_size,
-                        'directory': get_relative_path(path.parent)
+                        'size': stat.st_size,
+                        'directory': get_relative_path(path.parent),
+                        'modified': stat.st_mtime,
+                        'is_test': config.is_test_file(path)
                     })
     except Exception as e:
         print(f"Error finding Python files: {e}", file=sys.stderr)
@@ -430,6 +446,12 @@ def read_file_content(file_path: str, max_size: int = None) -> Dict[str, Any]:
     
     try:
         full_path = config.project_root / file_path
+        
+        # Check if file should be ignored
+        if config.is_ignored_path(full_path):
+            return {'error': f'File is ignored: {file_path}'}
+        
+        # Check if file exists and is actually a file
         if not full_path.exists():
             return {'error': f'File not found: {file_path}'}
         
@@ -437,14 +459,20 @@ def read_file_content(file_path: str, max_size: int = None) -> Dict[str, Any]:
             return {'error': f'Path is not a file: {file_path}'}
         
         file_size = full_path.stat().st_size
-        if file_size > max_size:
-            return {
-                'error': f'File too large: {file_size} bytes (max: {max_size} bytes)',
-                'size': file_size
-            }
+        truncated = file_size > max_size
         
         with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+            if truncated:
+                # Read only up to max_size
+                content = f.read(max_size)
+                # Try to end at a reasonable boundary
+                if len(content) == max_size:
+                    # Find the last newline to avoid cutting in the middle of a line
+                    last_newline = content.rfind('\n')
+                    if last_newline > max_size * 0.9:  # Only if we don't lose too much
+                        content = content[:last_newline + 1]
+            else:
+                content = f.read()
         
         return {
             'path': file_path,
@@ -452,8 +480,11 @@ def read_file_content(file_path: str, max_size: int = None) -> Dict[str, Any]:
             'size': file_size,
             'lines': len(content.splitlines()),
             'is_python': config.is_python_file(full_path),
-            'is_text': config.is_text_file(full_path)
+            'is_text': config.is_text_file(full_path),
+            'truncated': truncated
         }
+    except PermissionError:
+        return {'error': f'Permission denied: {file_path}'}
     except Exception as e:
         return {'error': f'Error reading file: {str(e)}'}
 
@@ -465,8 +496,15 @@ def get_directory_structure(directory: Optional[Path] = None, max_depth: int = N
     if max_depth is None:
         max_depth = config.max_directory_depth
     
+    # Check if directory exists
+    if not directory.exists():
+        return None
+    
     def build_tree(path: Path, current_depth: int = 0) -> Dict[str, Any]:
         if current_depth > max_depth or is_ignored_path(path):
+            return None
+        
+        if not path.exists():
             return None
         
         result = {
@@ -488,9 +526,18 @@ def get_directory_structure(directory: Optional[Path] = None, max_depth: int = N
             
             result['children'] = children
         else:
-            result['size'] = path.stat().st_size
-            result['is_python'] = config.is_python_file(path)
-            result['is_text'] = config.is_text_file(path)
+            try:
+                stat = path.stat()
+                result['size'] = stat.st_size
+                result['modified'] = stat.st_mtime
+                result['is_python'] = config.is_python_file(path)
+                result['is_text'] = config.is_text_file(path)
+            except (OSError, PermissionError):
+                # Handle cases where stat fails
+                result['size'] = 0
+                result['modified'] = 0
+                result['is_python'] = False
+                result['is_text'] = False
         
         return result
     
@@ -511,7 +558,7 @@ def get_project_info() -> Dict[str, Any]:
             total_size += size
             
             if config.is_python_file(path):
-                if 'test' in path.parts:
+                if config.is_test_file(path):
                     file_counts['test'] += 1
                 else:
                     file_counts['python'] += 1
@@ -564,6 +611,38 @@ def get_project_info() -> Dict[str, Any]:
             })
     
     info['key_files'] = key_files
+    
+    # Get file lists
+    info['python_files'] = find_python_files()
+    info['test_files'] = find_test_files()
+    
+    # Add total count to file_counts
+    info['file_counts']['total'] = sum(file_counts.values())
+    
+    # Calculate total lines of code
+    total_lines = 0
+    for file_info in info['python_files']:
+        try:
+            file_path = config.project_root / file_info['path']
+            if file_path.exists():
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    total_lines += len(f.readlines())
+        except Exception:
+            pass  # Skip files that can't be read
+    
+    info['total_lines'] = total_lines
+    
+    # Configuration information
+    info['configuration'] = {
+        'max_file_size': config.max_file_size,
+        'max_directory_depth': config.max_directory_depth,
+        'python_extensions': list(config.python_extensions),
+        'text_extensions': list(config.text_extensions),
+        'ignore_dirs': list(config.ignore_dirs),
+        'ignore_files': list(config.ignore_files),
+        'debug': config.debug,
+        'log_level': config.log_level
+    }
     
     return info
 
@@ -1010,6 +1089,7 @@ def suggest_test_cases(file_path: str, function_name: Optional[str] = None, clas
     suggestions = {
         'file_path': file_path,
         'framework': framework,
+        'recommended_framework': framework,
         'test_suggestions': []
     }
     
@@ -1345,7 +1425,7 @@ async def handle_list_tools() -> List[types.Tool]:
     """List available tools."""
     return [
         types.Tool(
-            name="list_python_files",
+            name="find_python_files",
             description="List all Python files in the project",
             inputSchema={
                 "type": "object",
@@ -1379,7 +1459,7 @@ async def handle_list_tools() -> List[types.Tool]:
             }
         ),
         types.Tool(
-            name="show_directory_structure",
+            name="get_directory_structure",
             description="Show the directory structure of the project",
             inputSchema={
                 "type": "object",
@@ -1422,7 +1502,7 @@ async def handle_list_tools() -> List[types.Tool]:
             }
         ),
         types.Tool(
-            name="get_function_info",
+            name="get_function_details",
             description="Get detailed information about a specific function (params, return type, docstring)",
             inputSchema={
                 "type": "object",
@@ -1441,7 +1521,7 @@ async def handle_list_tools() -> List[types.Tool]:
             }
         ),
         types.Tool(
-            name="get_class_info",
+            name="get_class_details",
             description="Get class methods, properties, and inheritance information",
             inputSchema={
                 "type": "object",
@@ -1584,253 +1664,203 @@ async def handle_list_tools() -> List[types.Tool]:
 async def handle_call_tool(name: str, arguments: dict) -> List[types.TextContent]:
     """Handle tool calls."""
     
-    if name == "list_python_files":
-        directory = arguments.get("directory")
-        search_dir = config.project_root / directory if directory else None
-        
-        if directory and not search_dir.exists():
-            return [types.TextContent(
-                type="text",
-                text=f"Directory not found: {directory}"
-            )]
-        
-        files = find_python_files(search_dir)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(files, indent=2)
-        )]
-    
-    elif name == "read_file":
-        file_path = arguments.get("file_path")
-        max_size = arguments.get("max_size", config.max_file_size)
-        
-        if not file_path:
-            return [types.TextContent(
-                type="text",
-                text="Error: file_path is required"
-            )]
-        
-        result = read_file_content(file_path, max_size)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, indent=2)
-        )]
-    
-    elif name == "show_directory_structure":
-        directory = arguments.get("directory")
-        max_depth = arguments.get("max_depth", config.max_directory_depth)
-        
-        search_dir = config.project_root / directory if directory else None
-        
-        if directory and not search_dir.exists():
-            return [types.TextContent(
-                type="text",
-                text=f"Directory not found: {directory}"
-            )]
-        
-        structure = get_directory_structure(search_dir, max_depth)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(structure, indent=2)
-        )]
-    
-    elif name == "get_project_info":
-        info = get_project_info()
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(info, indent=2)
-        )]
-    
-    elif name == "parse_module":
-        file_path = arguments.get("file_path")
-        
-        if not file_path:
-            return [types.TextContent(
-                type="text",
-                text="Error: file_path is required"
-            )]
-        
-        result = parse_module_ast(file_path)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, indent=2)
-        )]
-    
-    elif name == "get_function_info":
-        file_path = arguments.get("file_path")
-        function_name = arguments.get("function_name")
-        
-        if not file_path or not function_name:
-            return [types.TextContent(
-                type="text",
-                text="Error: file_path and function_name are required"
-            )]
-        
-        result = get_function_details(file_path, function_name)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, indent=2)
-        )]
-    
-    elif name == "get_class_info":
-        file_path = arguments.get("file_path")
-        class_name = arguments.get("class_name")
-        
-        if not file_path or not class_name:
-            return [types.TextContent(
-                type="text",
-                text="Error: file_path and class_name are required"
-            )]
-        
-        result = get_class_details(file_path, class_name)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, indent=2)
-        )]
-    
-    elif name == "find_imports":
-        file_path = arguments.get("file_path")
-        
-        if not file_path:
-            return [types.TextContent(
-                type="text",
-                text="Error: file_path is required"
-            )]
-        
-        result = find_imports_in_file(file_path)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, indent=2)
-        )]
-    
-    elif name == "get_type_hints":
-        file_path = arguments.get("file_path")
-        
-        if not file_path:
-            return [types.TextContent(
-                type="text",
-                text="Error: file_path is required"
-            )]
-        
-        result = get_type_hints_from_file(file_path)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, indent=2)
-        )]
-    
-    elif name == "analyze_test_files":
-        directory = arguments.get("directory")
-        search_dir = config.project_root / directory if directory else None
-        
-        if directory and not search_dir.exists():
-            return [types.TextContent(
-                type="text",
-                text=f"Directory not found: {directory}"
-            )]
-        
-        analysis = analyze_test_files(str(search_dir.relative_to(config.project_root)) if search_dir else None)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(analysis, indent=2)
-        )]
-    
-    elif name == "get_test_patterns":
-        directory = arguments.get("directory")
-        search_dir = config.project_root / directory if directory else None
-        
-        if directory and not search_dir.exists():
-            return [types.TextContent(
-                type="text",
-                text=f"Directory not found: {directory}"
-            )]
-        
-        patterns = get_test_patterns(str(search_dir.relative_to(config.project_root)) if search_dir else None)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(patterns, indent=2)
-        )]
-    
-    elif name == "find_untested_code":
-        source_dir = arguments.get("source_dir")
-        test_dir = arguments.get("test_dir")
-        
-        source_path = config.project_root / source_dir if source_dir else None
-        test_path = config.project_root / test_dir if test_dir else None
-        
-        if source_dir and not source_path.exists():
-            return [types.TextContent(
-                type="text",
-                text=f"Source directory not found: {source_dir}"
-            )]
-        if test_dir and not test_path.exists():
-            return [types.TextContent(
-                type="text",
-                text=f"Test directory not found: {test_dir}"
-            )]
-        
-        untested = find_untested_code(source_dir, test_dir)
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(untested, indent=2)
-        )]
-    
-    elif name == "suggest_test_cases":
-        file_path = arguments.get("file_path")
-        function_name = arguments.get("function_name")
-        class_name = arguments.get("class_name")
-        framework = arguments.get("framework")
-        
-        if not file_path:
-            return [types.TextContent(
-                type="text",
-                text="Error: file_path is required"
-            )]
-        
-        if function_name and class_name:
-            return [types.TextContent(
-                type="text",
-                text="Error: Please provide only one of function_name or class_name."
-            )]
-        
-        if function_name:
-            result = suggest_test_cases(file_path, function_name, framework=framework)
-        elif class_name:
-            result = suggest_test_cases(file_path, class_name=class_name, framework=framework)
+    try:
+        if name == "find_python_files":
+            directory = arguments.get("directory")
+            search_dir = config.project_root / directory if directory else None
+            
+            if directory and not search_dir.exists():
+                return [types.TextContent(
+                    type="text",
+                    text=f"Directory not found: {directory}"
+                )]
+            
+            files = find_python_files(search_dir)
+            result = files
+            
+        elif name == "read_file":
+            file_path = arguments.get("file_path")
+            max_size = arguments.get("max_size", config.max_file_size)
+            
+            if not file_path:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "file_path is required"}, indent=2)
+                )]
+            
+            result = read_file_content(file_path, max_size)
+            
+        elif name == "get_directory_structure":
+            directory = arguments.get("directory")
+            max_depth = arguments.get("max_depth", config.max_directory_depth)
+            
+            search_dir = config.project_root / directory if directory else None
+            
+            if directory and not search_dir.exists():
+                return [types.TextContent(
+                    type="text",
+                    text=f"Directory not found: {directory}"
+                )]
+            
+            result = get_directory_structure(search_dir, max_depth)
+            
+        elif name == "get_project_info":
+            result = get_project_info()
+            
+        elif name == "parse_module":
+            file_path = arguments.get("file_path")
+            
+            if not file_path:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "file_path is required"}, indent=2)
+                )]
+            
+            result = parse_module_ast(file_path)
+            
+        elif name == "get_function_details":
+            file_path = arguments.get("file_path")
+            function_name = arguments.get("function_name")
+            
+            if not file_path or not function_name:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "file_path and function_name are required"}, indent=2)
+                )]
+            
+            result = get_function_details(file_path, function_name)
+            
+        elif name == "get_class_details":
+            file_path = arguments.get("file_path")
+            class_name = arguments.get("class_name")
+            
+            if not file_path or not class_name:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "file_path and class_name are required"}, indent=2)
+                )]
+            
+            result = get_class_details(file_path, class_name)
+            
+        elif name == "find_imports":
+            file_path = arguments.get("file_path")
+            
+            if not file_path:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "file_path is required"}, indent=2)
+                )]
+            
+            result = find_imports_in_file(file_path)
+            
+        elif name == "get_type_hints":
+            file_path = arguments.get("file_path")
+            
+            if not file_path:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "file_path is required"}, indent=2)
+                )]
+            
+            result = get_type_hints_from_file(file_path)
+            
+        elif name == "analyze_test_files":
+            directory = arguments.get("directory")
+            search_dir = config.project_root / directory if directory else None
+            
+            if directory and not search_dir.exists():
+                return [types.TextContent(
+                    type="text",
+                    text=f"Directory not found: {directory}"
+                )]
+            
+            result = analyze_test_files(str(search_dir.relative_to(config.project_root)) if search_dir else None)
+            
+        elif name == "get_test_patterns":
+            directory = arguments.get("directory")
+            search_dir = config.project_root / directory if directory else None
+            
+            if directory and not search_dir.exists():
+                return [types.TextContent(
+                    type="text",
+                    text=f"Directory not found: {directory}"
+                )]
+            
+            result = get_test_patterns(str(search_dir.relative_to(config.project_root)) if search_dir else None)
+            
+        elif name == "find_untested_code":
+            source_dir = arguments.get("source_dir")
+            test_dir = arguments.get("test_dir")
+            
+            source_path = config.project_root / source_dir if source_dir else None
+            test_path = config.project_root / test_dir if test_dir else None
+            
+            if source_dir and not source_path.exists():
+                return [types.TextContent(
+                    type="text",
+                    text=f"Source directory not found: {source_dir}"
+                )]
+            if test_dir and not test_path.exists():
+                return [types.TextContent(
+                    type="text",
+                    text=f"Test directory not found: {test_dir}"
+                )]
+            
+            result = find_untested_code(source_dir, test_dir)
+            
+        elif name == "suggest_test_cases":
+            file_path = arguments.get("file_path")
+            function_name = arguments.get("function_name")
+            class_name = arguments.get("class_name")
+            framework = arguments.get("framework")
+            
+            if not file_path:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "file_path is required"}, indent=2)
+                )]
+            
+            if function_name and class_name:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "Please provide only one of function_name or class_name."}, indent=2)
+                )]
+            
+            if function_name:
+                result = suggest_test_cases(file_path, function_name, framework=framework)
+            elif class_name:
+                result = suggest_test_cases(file_path, class_name=class_name, framework=framework)
+            else:
+                result = suggest_test_cases(file_path, framework=framework)
+            
+        elif name == "get_test_coverage_info":
+            coverage_file = arguments.get("coverage_file")
+            
+            if not coverage_file:
+                result = get_test_coverage_info()
+            else:
+                result = get_test_coverage_info(coverage_file)
+            
         else:
-            result = suggest_test_cases(file_path, framework=framework)
+            result = {"error": f"Unknown tool: {name}"}
         
-        if 'error' in result:
-            return [types.TextContent(
-                type="text",
-                text=result['error']
-            )]
+        # Try to serialize the result to JSON
+        try:
+            json_text = json.dumps(result, indent=2)
+        except (TypeError, ValueError) as e:
+            # Handle JSON serialization errors (e.g., circular references)
+            json_text = json.dumps({"error": f"JSON serialization error: {str(e)}"}, indent=2)
+        
         return [types.TextContent(
             type="text",
-            text=json.dumps(result, indent=2)
+            text=json_text
         )]
     
-    elif name == "get_test_coverage_info":
-        coverage_file = arguments.get("coverage_file")
-        
-        if not coverage_file:
-            result = get_test_coverage_info()
-        else:
-            result = get_test_coverage_info(coverage_file)
-        
-        if 'error' in result:
-            return [types.TextContent(
-                type="text",
-                text=result['error']
-            )]
+    except Exception as e:
+        # Handle any other exceptions
         return [types.TextContent(
             type="text",
-            text=json.dumps(result, indent=2)
-        )]
-    
-    else:
-        return [types.TextContent(
-            type="text",
-            text=f"Unknown tool: {name}"
+            text=json.dumps({"error": f"Tool execution error: {str(e)}"}, indent=2)
         )]
 
 

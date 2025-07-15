@@ -46,7 +46,10 @@ class MCPServerConfig:
         """Check if a path should be ignored."""
         parts = path.parts
         for part in parts:
-            if part in self.ignore_dirs or part.startswith('.'):
+            if part in self.ignore_dirs:
+                return True
+            # Only ignore hidden files/directories, not path navigation elements like '..'
+            if part.startswith('.') and part not in ('..', '.'):
                 return True
         return path.name in self.ignore_files
     
@@ -57,6 +60,23 @@ class MCPServerConfig:
     def is_text_file(self, path: Path) -> bool:
         """Check if a file is a text file."""
         return path.suffix in self.text_extensions or self.is_python_file(path)
+    
+    def is_test_file(self, path: Path) -> bool:
+        """Check if a file is a test file."""
+        if not self.is_python_file(path):
+            return False
+        
+        # Check if file is in a test directory
+        path_parts = path.parts
+        for part in path_parts:
+            if part.startswith('test') or part == 'tests':
+                return True
+        
+        # Check if filename indicates it's a test file
+        filename = path.name
+        return (filename.startswith('test_') or 
+                filename.endswith('_test.py') or
+                filename == 'test.py')
     
     def get_project_info(self) -> Dict[str, Any]:
         """Get basic project information."""
