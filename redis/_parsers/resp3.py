@@ -142,6 +142,8 @@ class _AsyncRESP3Parser(_AsyncRESPBase, AsyncPushNotificationsParser):
         super().__init__(socket_read_size)
         self.pubsub_push_handler_func = self.handle_pubsub_push_response
         self.invalidation_push_handler_func = None
+        self.node_moving_push_handler_func = None
+        self.maintenance_push_handler_func = None
 
     async def handle_pubsub_push_response(self, response):
         logger = getLogger("push_response")
