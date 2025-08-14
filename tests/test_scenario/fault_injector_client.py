@@ -46,7 +46,7 @@ class FaultInjectorClient:
         request_data = None
         if data:
             request_data = json.dumps(data).encode('utf-8')
-            print(f"🌐 JSON payload being sent: {request_data.decode('utf-8')}")
+            print(f"JSON payload being sent: {request_data.decode('utf-8')}")
 
         request = urllib.request.Request(
             url,
@@ -71,7 +71,7 @@ class FaultInjectorClient:
     def trigger_action(self, action_request: ActionRequest) -> Dict[str, Any]:
         """Trigger a new action"""
         request_data = action_request.to_dict()
-        print(f"🌐 Sending HTTP request data: {request_data}")
+        print(f"Sending HTTP request data: {request_data}")
         return self._make_request("POST", "/action", request_data)
 
     def get_action_status(self, action_id: str) -> Dict[str, Any]:
@@ -87,7 +87,7 @@ class FaultInjectorClient:
         if bdb_id:
             command_string = f"rladmin -b {bdb_id} {command}"
             
-        print(f"🌐 Sending rladmin command: {command_string}")
+        print(f"Sending rladmin command: {command_string}")
         
         headers = {"Content-Type": "text/plain"}
         
