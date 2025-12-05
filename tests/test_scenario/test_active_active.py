@@ -2,7 +2,11 @@ import json
 import logging
 import os
 import threading
+import time
 from time import sleep
+
+CHECK_INTERVAL = 0.1
+LOOP_TIMEOUT = 30
 
 import pytest
 
@@ -84,24 +88,26 @@ class TestActiveActive:
         thread.start()
 
         # Execute commands before network failure
-        while not event.is_set():
+        start_time = time.time()
+        while not event.is_set() and time.time() - start_time < LOOP_TIMEOUT:
             assert (
                 retry.call_with_retry(
                     lambda: r_multi_db.get("key"), lambda _: dummy_fail()
                 )
                 == "value"
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         # Execute commands until database failover
-        while not listener.is_changed_flag:
+        start_time = time.time()
+        while not listener.is_changed_flag and time.time() - start_time < LOOP_TIMEOUT:
             assert (
                 retry.call_with_retry(
                     lambda: r_multi_db.get("key"), lambda _: dummy_fail()
                 )
                 == "value"
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
     @pytest.mark.parametrize(
         "r_multi_db",
@@ -153,24 +159,26 @@ class TestActiveActive:
         thread.start()
 
         # Execute commands before network failure
-        while not event.is_set():
+        start_time = time.time()
+        while not event.is_set() and time.time() - start_time < LOOP_TIMEOUT:
             assert (
                 retry.call_with_retry(
                     lambda: r_multi_db.get("key"), lambda _: dummy_fail()
                 )
                 == "value"
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         # Execute commands after network failure
-        while not listener.is_changed_flag:
+        start_time = time.time()
+        while not listener.is_changed_flag and time.time() - start_time < LOOP_TIMEOUT:
             assert (
                 retry.call_with_retry(
                     lambda: r_multi_db.get("key"), lambda _: dummy_fail()
                 )
                 == "value"
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
     @pytest.mark.parametrize(
         "r_multi_db",
@@ -221,14 +229,15 @@ class TestActiveActive:
         thread.start()
 
         # Execute pipeline before network failure
-        while not event.is_set():
+        start_time = time.time()
+        while not event.is_set() and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(lambda: callback(), lambda _: dummy_fail())
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         # Execute pipeline until database failover
         for _ in range(5):
             retry.call_with_retry(lambda: callback(), lambda _: dummy_fail())
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
     @pytest.mark.parametrize(
         "r_multi_db",
@@ -273,14 +282,15 @@ class TestActiveActive:
         thread.start()
 
         # Execute pipeline before network failure
-        while not event.is_set():
+        start_time = time.time()
+        while not event.is_set() and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(lambda: callback(), lambda _: dummy_fail())
-        sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         # Execute pipeline until database failover
         for _ in range(5):
             retry.call_with_retry(lambda: callback(), lambda _: dummy_fail())
-        sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
     @pytest.mark.parametrize(
         "r_multi_db",
@@ -324,18 +334,20 @@ class TestActiveActive:
         thread.start()
 
         # Execute transaction before network failure
-        while not event.is_set():
+        start_time = time.time()
+        while not event.is_set() and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(
                 lambda: r_multi_db.transaction(callback), lambda _: dummy_fail()
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         # Execute transaction until database failover
-        while not listener.is_changed_flag:
+        start_time = time.time()
+        while not listener.is_changed_flag and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(
                 lambda: r_multi_db.transaction(callback), lambda _: dummy_fail()
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
     @pytest.mark.parametrize(
         "r_multi_db",
@@ -379,18 +391,20 @@ class TestActiveActive:
         thread.start()
 
         # Execute publish before network failure
-        while not event.is_set():
+        start_time = time.time()
+        while not event.is_set() and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(
                 lambda: r_multi_db.publish("test-channel", data), lambda _: dummy_fail()
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         # Execute publish until database failover
-        while not listener.is_changed_flag:
+        start_time = time.time()
+        while not listener.is_changed_flag and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(
                 lambda: r_multi_db.publish("test-channel", data), lambda _: dummy_fail()
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         pubsub_thread.stop()
         assert messages_count > 2
@@ -441,20 +455,22 @@ class TestActiveActive:
         thread.start()
 
         # Execute publish before network failure
-        while not event.is_set():
+        start_time = time.time()
+        while not event.is_set() and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(
                 lambda: r_multi_db.spublish("test-channel", data),
                 lambda _: dummy_fail(),
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         # Execute publish until database failover
-        while not listener.is_changed_flag:
+        start_time = time.time()
+        while not listener.is_changed_flag and time.time() - start_time < LOOP_TIMEOUT:
             retry.call_with_retry(
                 lambda: r_multi_db.spublish("test-channel", data),
                 lambda _: dummy_fail(),
             )
-            sleep(0.5)
+            sleep(CHECK_INTERVAL)
 
         pubsub_thread.stop()
         assert messages_count > 2
