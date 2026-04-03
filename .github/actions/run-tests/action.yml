@@ -150,6 +150,8 @@ runs:
       run: |
         set -e
 
+        mkdir -p junit-results
+
         run_tests() {
           local protocol=$1
           local eventloop=""
@@ -193,12 +195,22 @@ runs:
         redis-cli -p 16379 CLUSTER NODES
       shell: bash
 
+    - name: Self Report Metrics
+      if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      uses: redis-developer/cae-otel-ci-visibility@v2
+      with:
+        junit-xml-folder: "junit-results"
+        otlp-endpoint: "https://otlp-gateway-prod-us-central-0.grafana.net/otlp/v1/metrics"
+        otlp-headers: "Authorization=Basic ${{secrets.SELF_CHECK_OTEL_AUTHORIZATION_TOKEN}}"
+      env:
+        OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+
     - name: Upload test results and profiling data
       uses: actions/upload-artifact@v4
       with:
         name: pytest-results-redis_${{inputs.redis-version}}-python_${{inputs.python-version}}-parser_${{env.PARSER_BACKEND}}-el_${{inputs.event-loop}}-protocol_${{inputs.protocol}}
         path: |
-          *-results.xml
+          junit-results/*-results.xml
           prof/**
           profile_output*
         if-no-files-found: error
