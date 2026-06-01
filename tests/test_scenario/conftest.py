@@ -24,6 +24,7 @@ from redis.client import Redis
 from redis.maint_notifications import EndpointType, MaintNotificationsConfig
 from redis.retry import Retry
 from tests.test_scenario.fault_injector_client import (
+    FaultInjectorClient,
     ProxyServerFaultInjector,
     REFaultInjector,
 )
@@ -403,3 +404,121 @@ def get_cluster_client_maint_notifications(
     )
 
     return client
+
+
+_FAULT_INJECTOR_CLIENT_SCENARIOS: Optional[FaultInjectorClient] = None
+
+
+def _get_scenario_fault_injector() -> Optional[FaultInjectorClient]:
+    """Get or create singleton fault injector client for scenarios."""
+    global _FAULT_INJECTOR_CLIENT_SCENARIOS
+    if _FAULT_INJECTOR_CLIENT_SCENARIOS is None and not use_mock_proxy():
+        url = os.getenv("FAULT_INJECTION_API_URL", "http://127.0.0.1:20324")
+        _FAULT_INJECTOR_CLIENT_SCENARIOS = REFaultInjector(url)
+    return _FAULT_INJECTOR_CLIENT_SCENARIOS
+
+
+@pytest.fixture()
+def fault_injector_client_scenarios() -> Optional[FaultInjectorClient]:
+    """Return the singleton fault injector client for scenario-based tests.
+
+    Returns None if mock proxy is being used (real RE required for scenarios).
+    """
+    return _get_scenario_fault_injector()
+
+
+def get_scenario_test_configs(
+    scenario: str,
+    effect: str,
+) -> list:
+    """Query the FI discovery API to dynamically generate test parametrization.
+
+    Returns a list of (trigger_name, requirement_index) tuples that can be used
+    with pytest.mark.parametrize.
+
+    Usage in test file:
+        @pytest.mark.parametrize(
+            "trigger,requirement_index",
+            get_scenario_test_configs("connection_failure", "connection_dropped"),
+        )
+        def test_connection_dropped(self, trigger, requirement_index):
+            ...
+    """
+    fi_client = _get_scenario_fault_injector()
+    if fi_client is None:
+        return []
+
+    try:
+        discovery = fi_client.discover_scenario(scenario, effect)
+        configs = []
+        for trigger in discovery.get("triggers", []):
+            trigger_name = trigger["name"]
+            requirements = trigger.get("requirements", [])
+            if requirements:
+                for i, _ in enumerate(requirements):
+                    configs.append((trigger_name, i))
+            else:
+                configs.append((trigger_name, 0))
+        return configs
+    except Exception as e:
+        logging.warning(f"Failed to discover scenario {scenario}/{effect}: {e}")
+        return []
+
+
+@pytest.fixture()
+def scenario_test_helper(fault_injector_client_scenarios):
+    """Provides a helper class for managing scenario test lifecycle."""
+
+    class ScenarioTestHelper:
+        def __init__(self, fi_client: FaultInjectorClient):
+            self._fi_client = fi_client
+            self._setup_id = None
+            self._scenario = None
+
+        def setup(
+            self,
+            scenario: str,
+            effect: str,
+            trigger: str,
+            requirement_index: int = 0,
+            **kwargs,
+        ) -> dict:
+            """Execute scenario setup and store setup_id for teardown."""
+            self._scenario = scenario
+            response = self._fi_client.setup_scenario(
+                scenario,
+                effect=effect,
+                trigger=trigger,
+                requirement_index=requirement_index,
+                **kwargs,
+            )
+            self._setup_id = response["setup_id"]
+            logging.info(f"Scenario setup: {scenario}/{effect}/{trigger}")
+            return response
+
+        def execute(self) -> dict:
+            """Execute the scenario."""
+            return self._fi_client.execute_scenario(self._scenario, self._setup_id)
+
+        def teardown(self) -> dict:
+            """Teardown the scenario."""
+            if self._setup_id and self._scenario:
+                result = self._fi_client.teardown_scenario(
+                    self._scenario,
+                    self._setup_id,
+                )
+                logging.info(f"Scenario teardown: {self._scenario}")
+                self._setup_id = None
+                return result
+            return {}
+
+        def reset_cluster(self, **kwargs) -> dict:
+            """Reset cluster state."""
+            return self._fi_client.reset_cluster(**kwargs)
+
+    if fault_injector_client_scenarios is None:
+        pytest.skip("Scenario tests require Redis Enterprise")
+
+    helper = ScenarioTestHelper(fault_injector_client_scenarios)
+    yield helper
+    helper.teardown()

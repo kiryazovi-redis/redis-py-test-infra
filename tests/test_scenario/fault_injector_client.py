@@ -183,6 +183,60 @@ class FaultInjectorClient(ABC):
     ) -> str:
         pass
 
+    @abstractmethod
+    def discover_scenario(
+        self,
+        scenario: str,
+        effect: str,
+        cluster_index: int = 0,
+    ) -> Dict[str, Any]:
+        """GET /scenarios/{scenario}?effect={effect}&cluster_index={cluster_index}"""
+        pass
+
+    @abstractmethod
+    def setup_scenario(
+        self,
+        scenario: str,
+        effect: str,
+        trigger: str,
+        requirement_index: int = 0,
+        cluster_index: int = 0,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """POST /scenarios/{scenario}/setup"""
+        pass
+
+    @abstractmethod
+    def execute_scenario(
+        self,
+        scenario: str,
+        setup_id: str,
+    ) -> Dict[str, Any]:
+        """POST /scenarios/{scenario}"""
+        pass
+
+    @abstractmethod
+    def teardown_scenario(
+        self,
+        scenario: str,
+        setup_id: str,
+    ) -> Dict[str, Any]:
+        """POST /scenarios/{scenario}/teardown"""
+        pass
+
+    @abstractmethod
+    def reset_cluster(
+        self,
+        cluster_index: int = 0,
+        clean_maintenance_mode: bool = True,
+        clean_iptables: bool = True,
+        clean_services: bool = True,
+        clean_latency: bool = True,
+        clean_all_dbs: bool = False,
+    ) -> Dict[str, Any]:
+        """POST /reset-cluster"""
+        pass
+
 
 class REFaultInjector(FaultInjectorClient):
     """Fault injector client for Redis Enterprise cluster setup."""
@@ -741,6 +795,73 @@ class REFaultInjector(FaultInjectorClient):
     def get_moving_ttl(self) -> int:
         return self.MOVING_TTL
 
+    def discover_scenario(
+        self,
+        scenario: str,
+        effect: str,
+        cluster_index: int = 0,
+    ) -> Dict[str, Any]:
+        """GET /scenarios/{scenario}?effect={effect}&cluster_index={cluster_index}"""
+        path = f"/scenarios/{scenario}?effect={effect}&cluster_index={cluster_index}"
+        return self._make_request("GET", path)
+
+    def setup_scenario(
+        self,
+        scenario: str,
+        effect: str,
+        trigger: str,
+        requirement_index: int = 0,
+        cluster_index: int = 0,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """POST /scenarios/{scenario}/setup"""
+        payload = {
+            "effect": effect,
+            "trigger": trigger,
+            "requirement_index": requirement_index,
+            "cluster_index": cluster_index,
+        }
+        payload.update(kwargs)
+        return self._make_request("POST", f"/scenarios/{scenario}/setup", payload)
+
+    def execute_scenario(
+        self,
+        scenario: str,
+        setup_id: str,
+    ) -> Dict[str, Any]:
+        """POST /scenarios/{scenario}"""
+        payload = {"setup_id": setup_id}
+        return self._make_request("POST", f"/scenarios/{scenario}", payload)
+
+    def teardown_scenario(
+        self,
+        scenario: str,
+        setup_id: str,
+    ) -> Dict[str, Any]:
+        """POST /scenarios/{scenario}/teardown"""
+        payload = {"setup_id": setup_id}
+        return self._make_request("POST", f"/scenarios/{scenario}/teardown", payload)
+
+    def reset_cluster(
+        self,
+        cluster_index: int = 0,
+        clean_maintenance_mode: bool = True,
+        clean_iptables: bool = True,
+        clean_services: bool = True,
+        clean_latency: bool = True,
+        clean_all_dbs: bool = False,
+    ) -> Dict[str, Any]:
+        """POST /reset-cluster"""
+        payload = {
+            "cluster_index": cluster_index,
+            "clean_maintenance_mode": clean_maintenance_mode,
+            "clean_iptables": clean_iptables,
+            "clean_services": clean_services,
+            "clean_latency": clean_latency,
+            "clean_all_dbs": clean_all_dbs,
+        }
+        return self._make_request("POST", "/reset-cluster", payload)
+
     def _get_first_master_shard(
         self,
         endpoint_config: Dict[str, Any],
@@ -1060,3 +1181,47 @@ class ProxyServerFaultInjector(FaultInjectorClient):
         this will need to be implemented in next iterations.
         """
         raise NotImplementedError("Not implemented for proxy server")
+
+    def discover_scenario(
+        self,
+        scenario: str,
+        effect: str,
+        cluster_index: int = 0,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError("Scenario API not implemented for proxy server")
+
+    def setup_scenario(
+        self,
+        scenario: str,
+        effect: str,
+        trigger: str,
+        requirement_index: int = 0,
+        cluster_index: int = 0,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError("Scenario API not implemented for proxy server")
+
+    def execute_scenario(
+        self,
+        scenario: str,
+        setup_id: str,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError("Scenario API not implemented for proxy server")
+
+    def teardown_scenario(
+        self,
+        scenario: str,
+        setup_id: str,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError("Scenario API not implemented for proxy server")
+
+    def reset_cluster(
+        self,
+        cluster_index: int = 0,
+        clean_maintenance_mode: bool = True,
+        clean_iptables: bool = True,
+        clean_services: bool = True,
+        clean_latency: bool = True,
+        clean_all_dbs: bool = False,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError("Reset cluster not implemented for proxy server")
