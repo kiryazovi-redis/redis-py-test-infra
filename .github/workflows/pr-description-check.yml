@@ -1,0 +1,59 @@
+name: PR Description Check
+
+# Advisory, comment-only check for PR description quality.
+#
+# Hybrid design: cheap rule-based checks run first, and Claude is only called
+# when those pass (to save tokens). The result is posted as a single sticky
+# comment. The check never fails the build.
+#
+# Controls:
+#   * Add the `skip-description-check` label to bypass the check.
+#   * Comment `/recheck-description` on the PR to re-run it.
+#
+# Security note: this uses `pull_request_target`, which runs with repo secrets
+# and base-branch code. We deliberately DO NOT check out or execute the PR's
+# head code — the script only reads PR title/body/diff via the API and posts a
+# comment.
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-description-check-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Run on PR events, or on an issue_comment that is on a PR and contains the
+    # re-trigger command. The script re-validates these conditions too.
+    if: >
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '/recheck-description'))
+    runs-on: ubuntu-latest
+    steps:
+      # Only the base-branch repository (trusted), never the PR head.
+      - name: Checkout base repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install anthropic
+
+      - name: Run PR description check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python .github/scripts/pr_description_check.py
