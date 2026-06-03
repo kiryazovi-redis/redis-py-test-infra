@@ -238,3 +238,5 @@ Special thanks to:
 -   Paul Hubbard for initial packaging support.
 
 [![Redis](https://github.com/redis/redis-py/blob/master/docs/_static/logo-redis.svg)](https://redis.io)
+
+<!-- test branch B: pr-description-check ai stage -->
