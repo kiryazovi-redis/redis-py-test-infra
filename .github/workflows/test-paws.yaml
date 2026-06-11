@@ -1,0 +1,51 @@
+name: Test PAWS Integration
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-paws:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      
+      - name: Create dummy test results
+        run: |
+          mkdir -p junit-results
+          cat > junit-results/test-results.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites>
+            <testsuite name="paws-test" tests="2" failures="0" errors="0" time="1.5">
+              <testcase classname="test.PAWSTest" name="test_metrics_work" time="0.5"/>
+              <testcase classname="test.PAWSTest" name="test_integration" time="1.0"/>
+            </testsuite>
+          </testsuites>
+          EOF
+          cat junit-results/test-results.xml
+
+      - name: Normalize JUnit XML for metrics
+        run: |
+          python3 - <<'PY'
+          import glob
+          import xml.etree.ElementTree as ET
+
+          for path in glob.glob("junit-results/*.xml"):
+              tree = ET.parse(path)
+              root = tree.getroot()
+              if root.tag == "testsuites" and root.get("time") is None:
+                  total = sum(float(ts.get("time") or 0) for ts in root.findall("testsuite"))
+                  root.set("time", f"{total:.6f}")
+                  tree.write(path, xml_declaration=True, encoding="utf-8")
+          PY
+          cat junit-results/test-results.xml
+
+      - name: Self Report Metrics
+        uses: redis-developer/cae-otel-ci-visibility@v2
+        with:
+          junit-xml-folder: "junit-results"
+          otlp-endpoint: "https://otlp-gateway-prod-us-central-0.grafana.net/otlp/v1/metrics"
+          otlp-headers: "Authorization=Basic ${{ secrets.SELF_CHECK_OTEL_AUTHORIZATION_TOKEN }}"
+        env:
+          OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+          ACTIONS_STEP_DEBUG: "true"
