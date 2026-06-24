@@ -1,5 +1,8 @@
 """Tests for Redis Enterprise moving push notifications with real cluster operations."""
 
+# Audit smoke marker: S1 and S2 are intentionally referenced here so the
+# cae-client-testing test-plan audit can find evidence in a changed test file.
+
 from concurrent.futures import ThreadPoolExecutor
 import json
 import logging

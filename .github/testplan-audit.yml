@@ -1,0 +1,12 @@
+version: 1
+feature_id: TESTPLAN_AUDIT_SMOKE
+tracker_id: SMOKE-001
+required_scenarios:
+  - id: S1
+    title: Scenario evidence exists in a changed sync scenario test
+  - id: S2
+    title: Scenario evidence exists in the PR description
+covered_scenarios:
+  - S1
+  - S2
+waivers: []
