@@ -1343,6 +1343,7 @@ class TestClusterClientPushNotificationsWithEffectTriggerBase(
             endpoints_config=cluster_endpoint_config,
             disable_retries=True,
             socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_timeout,
             enable_maintenance_notifications=True,
             auth_ssl_client_certs=auth_ssl_client_certs,
         )
